@@ -2,9 +2,8 @@
 # Filename    : Capstone.py
 # Description : Multi-directional robot with 2 robotic arms
 # auther      : Frederik Dupont
-# Co-auther   : Anker
 # created: 2023/01/02
-# modified 2023/02/21
+# modified 2023/01/06
 ########################################################################
 import RPi.GPIO as GPIO
 import time
@@ -13,13 +12,17 @@ import threading
 
 from RpiMotorLib import RpiMotorLib
 import wiringpi as wiringpi
-from time import sleep
+
+
+
 
 #MQTT Setup
-clientName = "Raspberry Pi"
-serverAddress = "raspberrypi"
-mqttClient = mqtt.Client(clientName)
+# clientName = "Robot"
+# serverAddress = "raspberrypi"
+# mqttClient = mqtt.Client(clientName)
 
+# # Flag to indicate subscribe confirmation hasn't been printed yet
+# didPrintSubscribeMessage = False
 
 # Setting Pin Mode
 GPIO.setmode(GPIO.BCM)
@@ -101,8 +104,8 @@ motorFLBR = RpiMotorLib.A4988Nema((motorDirFL,motorDirBR), (motorStepFL,motorSte
     
 
 # Front LEFT, FRONT RIGHT, BACK LEFT, BACK RIGHT
-def forward():
-    motorAll.motor_go((False,True,False,True), "1/16",10000,.00001,True,.05)  # for clockwise, we need False
+def forward(step):
+    motorAll.motor_go((False,True,False,True), "1/16",step,.00001,True,.05)  # for clockwise, we need False
 
 def backward():   
     motorAll.motor_go((True,False,True,False), "1/16",10000,.00001,True,.05)
@@ -114,22 +117,22 @@ def right():
     motorAll.motor_go((False,False,True, True), "1/16",10000,.00001,True,.05)
     
 def ccw():
-    motorAll.motor_go((False,False,False,False), "1/16",10000,.00001,True,.05)
+    motorAll.motor_go((False,False,False,False), "1/16",1000,.00001,True,.05)
     
 def cw():
-    motorAll.motor_go((True,True,True,True), "1/16",10000,.00001,True,.05)
+    motorAll.motor_go((True,True,True,True), "1/16",1000,.00001,True,.05)
     
 def diagFL():
-    motorFRBL.motor_go((True,False), "1/16",10000,.00001,True,.05)
+    motorFRBL.motor_go((True,False), "1/16",1000,.00001,True,.05)
     
 def diagFR():
-    motorFLBR.motor_go((False,True), "1/16",10000,.00001,True,.05)
+    motorFLBR.motor_go((False,True), "1/16",1000,.00001,True,.05)
     
 def diagBL():
-    motorFLBR.motor_go((True,False), "1/16",10000,.00001,True,.05)
+    motorFLBR.motor_go((True,False), "1/16",1000,.00001,True,.05)
     
 def diagBR():
-    motorFRBL.motor_go((False,True), "1/16",10000,.00001,True,.05)
+    motorFRBL.motor_go((False,True), "1/16",1000,.00001,True,.05)
 
 def destroy():
     GPIO.cleanup()                      # Release all GPIO
@@ -178,37 +181,72 @@ def getSonar(direction):     # get the measurement results of ultrasonic module,
     distance = pingTime * 340.0 / 2.0 / 10000.0     # calculate distance with sound speed 340m/s 
     return distance
 
+
+def sensor():
+    while(True):
+        distance1 = getSonar('L') # get distance
+        print ("The distance Left is : %.2f cm"%(distance1))
+        time.sleep(1)
+        distance2 = getSonar('F') # get distance
+        print ("The distance Front is : %.2f cm"%(distance2))
+        time.sleep(1)
+        distance3 = getSonar('R') # get distance
+        print ("The distance Right is : %.2f cm"%(distance3))
+        time.sleep(1)
+        distance4 = getSonar('B') # get distance
+        print ("The distance Back is : %.2f cm"%(distance4))
+        time.sleep(1)
+        
+        
 #For checking the connection status
 def connectionStatus(client, userdata, flags, rc):
     print("subscribing")
     mqttClient.subscribe("robot/move")
     print("subscribed")
 
+didPrintSubscribeMessage = False
 
-# #movement control
+# def connectionStatus(client, userdata, flags, rc):
+    # global didPrintSubscribeMessage
+    # if not didPrintSubscribeMessage:
+        # didPrintSubscribeMessage = True
+        # print("subscribing")
+        # mqttClient.subscribe("pibot/move")
+        # # print("subscribed")
+
+
+# movement control
 def messageDecoder(client, userdata, msg):
     
     #decodes the message 
     message = msg.payload.decode(encoding ='UTF-8')
     
     if message == "forward": 
-        forward()
-        print("^^^ forward! ^^^") 
+        distance1 = getSonar('F') # get distance
+        if distance1 >= 0:
+                if tuning == True:
+                    step=1000
+                else:
+                    step = 10000
+            forward(step)
+            print ("The Left distance is : %.2f cm"%(distance1))
+            print("^^^ forward! ^^^") 
+        else:
+            stop()
          
     elif message == "backward":
         backward()
         print("\/ backward \/")
         
     elif message == "left":
-        istance1 = getSonar('L') # get distance
-        if distance1 > 20:
+        distance1 = getSonar('L') # get distance
+        if distance1 >= 0:
             left()
             distance1 = getSonar('L') # get distance
             print ("The Left distance is : %.2f cm"%(distance1))
             print("<- left")
         else:
             stop()
-        
         
     elif message == "right":
         right()
@@ -238,6 +276,10 @@ def messageDecoder(client, userdata, msg):
         ccw()
         print("O Counter Clockwise")
             
+    elif message == "stop":
+        stop()
+        print("stopped")
+        
     elif message == "stop":
         stop()
         print("stopped")
@@ -305,6 +347,8 @@ def messageDecoder(client, userdata, msg):
         # loop(m)
 
     
+
+
 #main function:
 def loop(m):
     
@@ -338,18 +382,6 @@ def loop(m):
         horn()
     else:
         print("please make a selection")
-        
-        
-# Set up calling functions to mqttClient
-mqttClient.on_connect = connectionStatus
-mqttClient.on_message = messageDecoder
-
-
-# Connect to the MQTT server & loop forever.
-# CTRL-C will stop the program from running.
-print("server address is:", serverAddress)
-mqttClient.connect(serverAddress)
-mqttClient.loop_forever()
 
 # if __name__ == "__main__" :
     # print ('Program is starting ... \n')
@@ -387,3 +419,58 @@ mqttClient.loop_forever()
         # destroy()
 
   
+  
+  
+  
+
+    
+
+
+
+
+#MQTT Setup
+clientName = "Raspberry Pi"
+serverAddress = "raspberrypi"
+mqttClient = mqtt.Client(clientName)
+
+# Set up calling functions to mqttClient
+mqttClient.on_connect = connectionStatus
+mqttClient.on_message = messageDecoder
+
+
+# Connect to the MQTT server & loop forever.
+# CTRL-C will stop the program from running.
+print("server address is:", serverAddress)
+mqttClient.connect(serverAddress)
+mqttClient.loop_forever()
+
+
+    
+# 
+# if __name__ == '__main__':    # Program entrance
+#     print ('Program is starting ... \n')
+#     try:
+#         horn()
+#         forward()
+#         time.sleep(1)
+#         backward()
+#         time.sleep(1)
+#         left()
+#         time.sleep(1)
+#         right()
+#         time.sleep(1)
+#         diagFL()
+#         time.sleep(1)
+#         diagBR()
+#         time.sleep(1)
+#         diagFR()
+#         time.sleep(1)
+#         diagBL()
+#         time.sleep(1)
+#         cw()
+#         time.sleep(1)
+#         ccw()
+        
+    #except KeyboardInterrupt:   # Press ctrl-c to end the program.
+       # destroy()
+
